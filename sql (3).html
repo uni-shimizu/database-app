@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL実行環境</title>
+    <!-- Tailwind CSS (スタイリング用) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 基本設定 */
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            background-color: #f9fafb; /* 薄いグレー */
+            color: #333;
+        }
+
+        /* 実行結果のテーブルスタイル */
+        #result-table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 1rem;
+        }
+        #result-table th, #result-table td {
+            border: 1px solid #d1d5db; /* 罫線 */
+            padding: 0.5rem 1rem;
+            text-align: left;
+        }
+        #result-table th {
+            background-color: #e5e7eb; /* ヘッダーの背景色 */
+            font-weight: bold;
+        }
+        #result-table tr:nth-child(even) {
+            background-color: #f3f4f6; /* 偶数行の背景色 */
+        }
+        
+        /* エラーメッセージのスタイル */
+        .error-message {
+            color: #dc2626; /* 赤色 */
+            font-weight: bold;
+            margin-top: 1rem;
+            padding: 1rem;
+            background-color: #fee2e2;
+            border: 1px solid #f87171;
+            border-radius: 0.25rem;
+        }
+
+        /* detailsタグのデフォルトの三角マークを非表示にする */
+        details > summary {
+            list-style: none;
+        }
+        details > summary::-webkit-details-marker {
+            display: none;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- 全体をフレックスコンテナにしてサイドバーとメインを横並びにする -->
+    <div class="flex-1 flex max-w-[1400px] w-full mx-auto relative">
+        
+        <!-- データベース構造サイドバー -->
+        <aside id="sidebar" class="w-64 md:w-72 bg-white border-r border-gray-200 flex-shrink-0 flex flex-col h-screen sticky top-0 transition-transform duration-300 z-10 hidden md:flex shadow-lg md:shadow-none absolute md:relative">
+            <!-- サイドバーのヘッダー -->
+            <div class="p-4 border-b border-gray-200 bg-gray-100 flex justify-between items-center">
+                <h2 class="font-bold text-gray-700 text-lg">データベース構造</h2>
+                <button id="btn-close-sidebar" class="md:hidden text-gray-500 hover:text-gray-800 text-sm font-bold p-1">
+                    閉じる
+                </button>
+            </div>
+            
+            <!-- サイドバーの内容（ここに動的にテーブル情報が入る） -->
+            <div id="db-structure-content" class="p-4 overflow-y-auto flex-1 space-y-2">
+                <p class="text-sm text-gray-500 italic">読み込み中...</p>
+            </div>
+        </aside>
+
+        <!-- メインコンテンツ -->
+        <main class="flex-1 p-6 md:p-10 w-full overflow-x-hidden">
+            
+            <header class="mb-6 flex flex-col md:flex-row md:justify-between md:items-end gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800">SQL実行環境</h1>
+                    <p class="text-gray-600 mt-2">入力欄にSQL文を入力し、「実行」ボタンを押してください。</p>
+                </div>
+                <!-- サイドバー開閉トグルボタン -->
+                <button id="btn-toggle-sidebar" class="bg-white hover:bg-gray-100 text-gray-700 font-semibold py-1.5 px-4 rounded border border-gray-300 shadow-sm text-sm self-start md:self-auto flex items-center">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    <span>構造を閉じる</span>
+                </button>
+            </header>
+
+            <div class="space-y-4">
+                <!-- SQL入力エリア -->
+                <div class="flex flex-col space-y-2">
+                    <textarea id="sql-input" 
+                              class="w-full h-48 p-4 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y font-mono text-lg" 
+                              placeholder="ここにSQL文を入力してください"></textarea>
+                </div>
+
+                <!-- ボタンエリア -->
+                <div class="flex flex-wrap gap-4 items-center">
+                    <button id="btn-execute" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded shadow">
+                        実行
+                    </button>
+                    <button id="btn-clear" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-6 rounded shadow border border-gray-300">
+                        入力を消す
+                    </button>
+                    <div class="flex-grow"></div> <!-- 右寄せ用スペーサー -->
+                    <button id="btn-reset" class="bg-red-50 hover:bg-red-100 text-red-600 font-semibold py-2 px-6 rounded shadow border border-red-200">
+                        データベースを初期状態に戻す
+                    </button>
+                </div>
+
+                <!-- 実行結果表示エリア -->
+                <div class="mt-8 border-t border-gray-300 pt-6">
+                    <h2 class="text-xl font-bold mb-4 text-gray-700">実行結果</h2>
+                    <div id="result-container" class="overflow-x-auto bg-white p-4 rounded shadow min-h-[200px]">
+                        <!-- 結果のテーブルまたはエラーメッセージがここに表示されます -->
+                        <p class="text-gray-500 italic">まだ実行されていません。</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- sql.js ライブラリの読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+    <script>
+        let db = null; // SQLiteデータベースのインスタンスを保持する変数
+
+        // ---------------------------------------------------------
+        // データベースの初期設定（教員編集用）
+        // ---------------------------------------------------------
+        
+        // テーブル作成のSQL
+        const CREATE_TABLE_SQL = `
+            CREATE TABLE 商品 (
+                商品ID INTEGER PRIMARY KEY,
+                商品名 TEXT,
+                分類 TEXT,
+                価格 INTEGER,
+                在庫数 INTEGER
+            );
+        `;
+
+        // 初期データのINSERT文
+        // ※データを変更・追加する場合はここを編集してください
+        const INSERT_DATA_SQL = `
+            INSERT INTO 商品 (商品ID, 商品名, 分類, 価格, 在庫数) VALUES
+            (1, 'ノート', '文具', 200, 30),
+            (2, 'ペン', '文具', 120, 50),
+            (3, 'USBメモリ', 'PC用品', 1500, 12),
+            (4, 'マウス', 'PC用品', 2500, 8),
+            (5, 'ファイル', '文具', 350, 20),
+            (6, 'キーボード', 'PC用品', 3000, 5),
+            (7, '消しゴム', '文具', 100, 40),
+            (8, 'Webカメラ', 'PC用品', 4200, 6);
+        `;
+
+        // ---------------------------------------------------------
+        // アプリケーションロジック
+        // ---------------------------------------------------------
+
+        // データベースを初期化（作成・データ投入）する関数
+        async function initializeDatabase() {
+            try {
+                // sql.jsの初期化 (WASMファイルのパスを指定)
+                const SQL = await initSqlJs({
+                    locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+                });
+
+                // 新しいデータベースインスタンスを作成
+                db = new SQL.Database();
+
+                // テーブルの作成と初期データの投入を実行
+                db.run(CREATE_TABLE_SQL);
+                db.run(INSERT_DATA_SQL);
+                
+                console.log("データベースが初期化されました。");
+                
+                // データベース構造サイドバーを更新
+                refreshDatabaseStructure();
+            } catch (err) {
+                console.error("データベースの初期化に失敗しました:", err);
+                showError("システムの初期化エラー: " + err.message);
+            }
+        }
+
+        // SQLを実行する関数
+        function executeSQL() {
+            if (!db) {
+                showError("データベースがまだ準備されていません。少し待ってから再度お試しください。");
+                return;
+            }
+
+            const sqlInput = document.getElementById('sql-input').value.trim();
+            const resultContainer = document.getElementById('result-container');
+
+            // 入力が空の場合は何もしない
+            if (sqlInput === '') {
+                resultContainer.innerHTML = '<p class="text-gray-500 italic">SQL文を入力してください。</p>';
+                return;
+            }
+
+            try {
+                // SQLを実行 (db.exec は複数のSQL文があっても実行し、結果の配列を返す)
+                const results = db.exec(sqlInput);
+                
+                // 実行結果を画面に表示
+                displayResults(results);
+
+                // テーブル構成が変わるSQL(CREATE/DROP/ALTERなど)が実行された可能性を考慮し、構造を再読み込み
+                refreshDatabaseStructure();
+            } catch (err) {
+                // SQLiteからのエラーメッセージをそのまま表示 (ヒント等は追加しない)
+                showError(err.message);
+            }
+        }
+
+        // 実行結果（表）をHTMLとして描画する関数
+        function displayResults(results) {
+            const container = document.getElementById('result-container');
+            container.innerHTML = ''; // コンテナをクリア
+
+            if (results.length === 0) {
+                // SELECT以外の文（UPDATE, DELETE等）で結果が返らない場合
+                container.innerHTML = '<p class="text-green-600 font-bold">SQLが正常に実行されました。（結果データなし）</p>';
+                return;
+            }
+
+            // results[0] に最初のSELECT文の結果が入っている
+            const columns = results[0].columns;
+            const values = results[0].values;
+
+            // HTMLテーブルの構築
+            const table = document.createElement('table');
+            table.id = 'result-table';
+
+            // ヘッダー (th) の作成
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            columns.forEach(colName => {
+                const th = document.createElement('th');
+                th.textContent = colName; // 日本語の列名もそのまま表示
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            // データ行 (td) の作成
+            const tbody = document.createElement('tbody');
+            values.forEach(row => {
+                const tr = document.createElement('tr');
+                row.forEach(val => {
+                    const td = document.createElement('td');
+                    // 値がnullの場合は空文字にする
+                    td.textContent = val !== null ? val : '';
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+
+            // コンテナにテーブルを追加
+            container.appendChild(table);
+        }
+
+        // エラーメッセージを表示する関数
+        function showError(message) {
+            const container = document.getElementById('result-container');
+            container.innerHTML = `<div class="error-message">Error: ${message}</div>`;
+        }
+
+        // リセット機能（データベース再構築）
+        async function resetDatabase() {
+            if (window.confirm("データベースを初期状態（データが入力された直後の状態）に戻しますか？\nこれまでに実行した追加や削除の操作はすべて失われます。")) {
+                // 現在のDBインスタンスを破棄してメモリ解放
+                if (db) {
+                    db.close();
+                }
+                
+                // UIをクリア
+                document.getElementById('sql-input').value = '';
+                document.getElementById('result-container').innerHTML = '<p class="text-gray-500 italic">データベースを初期化しました。</p>';
+                
+                // 再初期化（内部で refreshDatabaseStructure も呼ばれる）
+                await initializeDatabase();
+            }
+        }
+
+        // ---------------------------------------------------------
+        // データベース構造の取得とサイドバー描画
+        // ---------------------------------------------------------
+        function refreshDatabaseStructure() {
+            const container = document.getElementById('db-structure-content');
+            
+            if (!db) {
+                return;
+            }
+
+            try {
+                // 1. テーブル一覧を取得 (SQLiteのシステムテーブルは除外)
+                const tablesQuery = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;";
+                const tablesResult = db.exec(tablesQuery);
+                
+                container.innerHTML = ''; // 以前の表示をクリア
+
+                if (tablesResult.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-sm py-2">テーブルがありません。</p>';
+                    return;
+                }
+
+                // 取得したテーブル名の配列を作成
+                const tableNames = tablesResult[0].values.map(row => row[0]);
+
+                // 2. 各テーブルについて列情報を取得し、HTMLを生成
+                tableNames.forEach(tableName => {
+                    // PRAGMA文でテーブルの列情報を取得
+                    const columnsQuery = `PRAGMA table_info("${tableName}");`;
+                    const columnsResult = db.exec(columnsQuery);
+                    
+                    let columnsHtml = '';
+
+                    if (columnsResult.length > 0) {
+                        const columns = columnsResult[0].values;
+                        
+                        // PRAGMA table_infoの戻り値:
+                        // インデックス 1: 列名 (name)
+                        // インデックス 2: データ型 (type)
+                        // インデックス 5: 主キーフラグ (pk)
+                        columns.forEach(col => {
+                            const colName = col[1];
+                            const colType = col[2] || ''; // 型が定義されていない場合のフォールバック
+                            const isPk = col[5] > 0;
+
+                            const pkIcon = isPk ? '<span class="inline-block w-6 text-center" title="主キー">🔑</span>' : '<span class="inline-block w-6 text-center"></span>';
+                            
+                            columnsHtml += `
+                                <li class="flex items-center text-sm py-1 border-b border-gray-100 last:border-0 pl-1">
+                                    ${pkIcon}
+                                    <span class="mr-2 text-gray-800">${colName}</span>
+                                    <span class="text-xs text-gray-400 font-mono ml-auto">${colType}</span>
+                                </li>
+                            `;
+                        });
+                    }
+
+                    // HTML5の <details> <summary> を使って展開・折りたたみUIを作成
+                    const detailsHtml = `
+                        <details class="mb-3 group bg-white border border-gray-200 rounded shadow-sm" open>
+                            <summary class="cursor-pointer font-bold text-gray-700 bg-gray-50 hover:bg-gray-100 p-2.5 rounded flex justify-between items-center transition-colors">
+                                <div class="flex items-center">
+                                    <!-- 展開状態を示す矢印 (開いているときは下を向く) -->
+                                    <svg class="w-4 h-4 mr-2 text-gray-500 transition-transform duration-200 group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                                    ${tableName}
+                                </div>
+                            </summary>
+                            <ul class="p-2 bg-white rounded-b">
+                                ${columnsHtml}
+                            </ul>
+                        </details>
+                    `;
+                    
+                    container.insertAdjacentHTML('beforeend', detailsHtml);
+                });
+                
+            } catch (err) {
+                console.error("データベース構造の取得に失敗しました:", err);
+                container.innerHTML = '<p class="text-red-500 text-sm">構造の取得に失敗しました。</p>';
+            }
+        }
+
+        // ---------------------------------------------------------
+        // UI操作（サイドバー開閉など）とイベントリスナーの登録
+        // ---------------------------------------------------------
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const toggleBtnSpan = document.querySelector('#btn-toggle-sidebar span');
+            
+            // クラスの切り替えによる表示・非表示
+            // モバイル用 (hidden を切り替え) と デスクトップ用 (md:flex を切り替え)
+            const isHidden = sidebar.classList.contains('hidden');
+            
+            if (isHidden) {
+                sidebar.classList.remove('hidden');
+                sidebar.classList.add('flex');
+                if (window.innerWidth >= 768) {
+                    sidebar.classList.add('md:flex');
+                }
+                toggleBtnSpan.textContent = '構造を閉じる';
+            } else {
+                sidebar.classList.add('hidden');
+                sidebar.classList.remove('flex');
+                sidebar.classList.remove('md:flex');
+                toggleBtnSpan.textContent = '構造を表示';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // ページ読み込み時にデータベースを初期化
+            initializeDatabase();
+
+            // 「実行」ボタンのクリックイベント
+            document.getElementById('btn-execute').addEventListener('click', executeSQL);
+
+            // 「入力を消す」ボタンのクリックイベント
+            document.getElementById('btn-clear').addEventListener('click', () => {
+                document.getElementById('sql-input').value = '';
+                document.getElementById('sql-input').focus();
+            });
+
+            // 「データベースを初期状態に戻す」ボタンのクリックイベント
+            document.getElementById('btn-reset').addEventListener('click', resetDatabase);
+            
+            // サイドバーの開閉ボタン
+            document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
+            document.getElementById('btn-close-sidebar').addEventListener('click', toggleSidebar);
+        });
+    </script>
+</body>
+</html>
